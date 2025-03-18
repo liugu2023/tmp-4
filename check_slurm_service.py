@@ -37,10 +37,14 @@ def check_qwq_service():
             text=True
         )
         
+        # 打印完整命令输出
+        print("squeue命令输出:")
+        print(result.stdout)
+        print("错误输出:", result.stderr)
+        
         # 如果grep找到内容，返回码为0
         is_running = result.returncode == 0
         
-        # 打印状态，方便调试
         print(f"QwQ-serv服务状态: {'运行中' if is_running else '未运行'}")
         
         return is_running
@@ -49,6 +53,14 @@ def check_qwq_service():
         return False
 
 if __name__ == '__main__':
+    # 添加直接检查功能
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "check":
+        print("执行手动检查...")
+        status = check_qwq_service()
+        print(f"检查结果: {status}")
+        sys.exit(0)
+    
     print("SLURM服务状态检查API已启动")
     print("监听端口：30000")
     app.run(host='0.0.0.0', port=30000) 
