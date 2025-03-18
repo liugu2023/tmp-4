@@ -90,6 +90,22 @@ class ChatBot(Resource):
                 "success": False
             }), 500
 
+@ns.route('/chat/chat/completions')
+class ChatCompletions(Resource):
+    @api.expect(message_model)
+    @api.doc(
+        responses={
+            200: "成功处理请求",
+            400: "无效的请求数据",
+            503: "模型服务不可用"
+        },
+        description="处理聊天完成请求 - 兼容旧路径"
+    )
+    def post(self):
+        """与/chat端点相同功能（兼容旧路径）"""
+        # 复用ChatBot的post方法逻辑
+        return ChatBot().post()
+
 def check_qwq_service():
     """
     检查SLURM队列中是否有名为QwQ-serv的任务
