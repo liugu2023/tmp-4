@@ -11,24 +11,34 @@ MODEL_JOB_NAME_PATTERN = "QwQ-serv"  # 假设模型任务的名称包含这个�
 def check_node_status(node_name):
     """
     检查指定节点的状态
-    返回: (是否有任务在运行, 错误信息)
+    返回: (是否有任务在运行, 任务ID列表或错误信息)
     """
     try:
         # 使用squeue检查指定节点上的任务
         result = subprocess.run(
-            f"squeue -w {node_name}", 
+            f"squeue -w {node_name} -o '%i %j'", 
             shell=True,
             capture_output=True, 
             text=True
         )
         
-        # 如果输出中包含节点名称，说明有任务在运行
-        has_jobs = node_name in result.stdout
+        # 解析输出获取任务ID和名称
+        jobs = []
+        for line in result.stdout.strip().split('\n')[1:]:  # 跳过表头
+            if line.strip():
+                parts = line.strip().split()
+                if len(parts) >= 1:
+                    job_id = parts[0]
+                    job_name = " ".join(parts[1:]) if len(parts) > 1 else "未知"
+                    jobs.append((job_id, job_name))
+        
+        # 如果有任务则返回True和任务列表
+        has_jobs = len(jobs) > 0
         
         # 打印状态，方便调试
         print(f"{node_name} 状态: {'有任务运行' if has_jobs else '空闲'}")
         
-        return (has_jobs, None)
+        return (has_jobs, jobs)
     except Exception as e:
         error_msg = f"检查节点状态时出错: {str(e)}"
         print(error_msg)
@@ -196,25 +206,27 @@ def main():
             check_and_handle_pending_jobs()
             last_pending_check_time = current_time
         
-        has_jobs, error = check_node_status("compute04")
+        has_jobs, result = check_node_status("compute04")
         
-        if error:
-            print(f"检查节点状态失败: {error}")
-        elif not has_jobs:
+        if isinstance(result, str):  # 错误信息
+            print(f"检查节点状态失败: {result}")
+        elif has_jobs:
+            print("compute04节点当前有任务运行:")
+            for job_id, job_name in result:
+                print(f"  - 任务ID: {job_id}, 名称: {job_name}")
+            time.sleep(60)  # 1分钟后再次检查
+        else:
             print("compute04节点空闲，准备提交任务...")
-            success, result = submit_server_job()
+            success, submit_result = submit_server_job()
             
             if success:
-                print(f"成功提交任务到compute04，任务ID: {result}")
+                print(f"成功提交任务到compute04，任务ID: {submit_result}")
                 # 等待较长时间再次检查
                 time.sleep(300)  # 5分钟
             else:
-                print(f"提交任务失败: {result}")
+                print(f"提交任务失败: {submit_result}")
                 # 失败后等待较短时间再试
                 time.sleep(60)  # 1分钟
-        else:
-            print("compute04节点当前有任务运行")
-            time.sleep(60)  # 1分钟后再次检查
 
 if __name__ == "__main__":
     try:
