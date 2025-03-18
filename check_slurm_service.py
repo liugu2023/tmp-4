@@ -26,28 +26,29 @@ class CheckService(Resource):
 
 def check_qwq_service():
     """
-    检查SLURM队列中是否有名为QwQ-serv的任务
+    检查SLURM队列中是否有正在运行的QwQ-serv任务
     """
     try:
-        # 使用grep直接过滤结果
+        # 使用更精确的检查命令，只匹配运行中的任务
+        cmd = "squeue -h -n QwQ-serv -t R --noheader"
         result = subprocess.run(
-            "squeue | grep 'QwQ-serv'", 
+            cmd,
             shell=True,
-            capture_output=True, 
+            capture_output=True,
             text=True
         )
         
-        # 打印完整命令输出
-        print("squeue命令输出:")
-        print(result.stdout)
-        print("错误输出:", result.stderr)
+        # 打印调试信息
+        print(f"执行检查命令: {cmd}")
+        print("命令输出:", result.stdout.strip())
+        print("错误输出:", result.stderr.strip())
         
-        # 如果grep找到内容，返回码为0
-        is_running = result.returncode == 0
+        # 如果有输出则表示有正在运行的任务
+        is_running = result.stdout.strip() != ""
         
         print(f"QwQ-serv服务状态: {'运行中' if is_running else '未运行'}")
-        
         return is_running
+        
     except Exception as e:
         print(f"检查服务状态时出错: {str(e)}")
         return False
