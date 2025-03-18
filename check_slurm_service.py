@@ -128,8 +128,65 @@ class ChatCompletions(Resource):
     )
     def post(self):
         """与/chat端点相同功能（兼容旧路径）"""
-        # 复用ChatBot的post方法逻辑
-        return ChatBot().post()
+        # 首先检查模型服务是否在运行
+        if not check_qwq_service():
+            return jsonify({"error": "模型服务当前不可用"}), 503
+            
+        # 获取请求数据
+        input_data = request.get_json()
+        if not input_data:
+            return jsonify({"error": "未提供输入数据"}), 400
+            
+        # 验证消息内容不为空
+        if not input_data.get('message', '').strip():
+            return jsonify({"error": "消息内容不能为空", "success": False}), 400
+            
+        try:
+            # 准备发送给模型的数据
+            chat_data = prepare_chat_data(input_data)
+            
+            # 转发请求到模型服务
+            response = forward_to_model(chat_data)
+            
+            # 提取回复内容 - 添加更多安全检查
+            if 'choices' in response and len(response['choices']) > 0:
+                try:
+                    message = response['choices'][0].get('message', {})
+                    if not message:
+                        raise ValueError("响应中缺少message字段")
+                        
+                    message_content = message.get('content', '')
+                    if not message_content:
+                        raise ValueError("响应中缺少content字段")
+                        
+                    # 移除<think>标签内容（如果存在）
+                    if '<think>' in message_content and '</think>' in message_content:
+                        parts = message_content.split('</think>')
+                        if len(parts) > 1:
+                            message_content = parts[1].strip()
+                    
+                    return {
+                        "response": message_content,
+                        "success": True
+                    }
+                except Exception as e:
+                    print(f"解析模型响应时出错: {str(e)}")
+                    print(f"原始响应: {json.dumps(response, ensure_ascii=False)}")
+                    return {
+                        "error": "解析模型响应时出错",
+                        "success": False
+                    }, 500
+            else:
+                return {
+                    "error": "模型未返回有效回复",
+                    "success": False
+                }, 500
+                
+        except Exception as e:
+            return {
+                "error": f"处理消息时出错: {str(e)}",
+                "success": False
+            }, 500
 
 def check_qwq_service():
     """
