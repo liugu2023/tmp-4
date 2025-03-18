@@ -6,7 +6,7 @@ from datetime import datetime
 
 # 配置参数
 CHECK_INTERVAL = 300  # 检查间隔(秒)，5分钟
-API_URL = "http://10.21.22.204:25000/api/check-service"  # 状态检查API地址
+API_URL = "http://10.21.22.204:30000/api/check-service"  # 状态检查API地址
 QQ_BOT_URL = "http://127.0.0.1:5700"  # go-cqhttp的API地址
 GROUP_ID = "783316363"  # 需要通知的QQ群号
 ACCESS_TOKEN = "lgy060802"  # 机器人访问令牌

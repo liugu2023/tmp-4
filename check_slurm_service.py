@@ -50,5 +50,5 @@ def check_qwq_service():
 
 if __name__ == '__main__':
     print("SLURM服务状态检查API已启动")
-    print("监听端口: 25000")
-    app.run(host='0.0.0.0', port=25000) 
+    print("监听端口：30000")
+    app.run(host='0.0.0.0', port=30000) 
