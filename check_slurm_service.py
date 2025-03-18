@@ -8,7 +8,7 @@ from flask import Flask, jsonify, request
 from flask_restx import Api, Resource, fields
 
 # 模型服务地址配置
-MODEL_SERVICE_URL = "http://10.21.22.204:29500/v1"  # 实际的API地址
+MODEL_SERVICE_URL = "http://10.21.22.204:29500/"  # 实际的API地址
 
 # API密钥配置
 API_KEY = "sk-no-key-required"  # 已更新为提供的API密钥
@@ -130,16 +130,16 @@ class ChatCompletions(Resource):
         """与/chat端点相同功能（兼容旧路径）"""
         # 首先检查模型服务是否在运行
         if not check_qwq_service():
-            return jsonify({"error": "模型服务当前不可用"}), 503
+            return {"error": "模型服务当前不可用"}, 503
             
         # 获取请求数据
         input_data = request.get_json()
         if not input_data:
-            return jsonify({"error": "未提供输入数据"}), 400
+            return {"error": "未提供输入数据"}, 400
             
         # 验证消息内容不为空
         if not input_data.get('message', '').strip():
-            return jsonify({"error": "消息内容不能为空", "success": False}), 400
+            return {"error": "消息内容不能为空", "success": False}, 400
             
         try:
             # 准备发送给模型的数据
