@@ -6,64 +6,100 @@ import sys
 import re
 
 # 定义标识模型任务的名称模式
-MODEL_JOB_NAME_PATTERN = "QwQ-serv"  # 假设模型任务的名称包含这个字符串
+MODEL_JOB_NAME_PATTERN = "QwQ-serv"
+ACTIVE_NODES = ["compute04", "compute01", "compute05"]  # 优先级顺序
+CURRENT_RUNNING_NODE = None  # 当前运行节点
 
-def check_node_status(node_name):
+def check_node_status(node_name, ignore_our_job=True):
     """
     检查指定节点的状态
+    Args:
+        ignore_our_job: 是否忽略我们自己的任务
     返回: (是否有任务在运行, 任务ID列表或错误信息)
     """
     try:
-        # 使用squeue检查指定节点上的任务
-        result = subprocess.run(
-            f"squeue -w {node_name} -o '%i %j'", 
-            shell=True,
-            capture_output=True, 
-            text=True
-        )
+        # 获取完整任务信息
+        result = subprocess.run(f"scontrol show jobs", shell=True, capture_output=True, text=True)
         
-        # 解析输出获取任务ID和名称
         jobs = []
-        for line in result.stdout.strip().split('\n')[1:]:  # 跳过表头
-            if line.strip():
-                parts = line.strip().split()
-                if len(parts) >= 1:
-                    job_id = parts[0]
-                    job_name = " ".join(parts[1:]) if len(parts) > 1 else "未知"
-                    jobs.append((job_id, job_name))
+        job_blocks = result.stdout.strip().split("\n\n")
         
-        # 如果有任务则返回True和任务列表
-        has_jobs = len(jobs) > 0
-        
-        # 打印状态，方便调试
+        for block in job_blocks:
+            job_info = {}
+            for line in block.split("\n"):
+                for part in line.strip().split():
+                    if "=" in part:
+                        key, value = part.split("=", 1)
+                        job_info[key] = value
+            
+            if job_info.get('NodeList') == node_name:
+                if ignore_our_job and MODEL_JOB_NAME_PATTERN in job_info.get('JobName', ''):
+                    continue  # 忽略我们自己的任务
+                jobs.append(job_info)
+
+        has_jobs = len(jobs) > 0 or check_gpu_usage(node_name)
         print(f"{node_name} 状态: {'有任务运行' if has_jobs else '空闲'}")
-        
         return (has_jobs, jobs)
     except Exception as e:
         error_msg = f"检查节点状态时出错: {str(e)}"
         print(error_msg)
         return (True, error_msg)  # 发生错误时假定节点繁忙
 
-def submit_server_job():
+def check_gpu_usage(node_name):
+    """检查节点GPU使用率"""
+    try:
+        result = subprocess.run(
+            f"ssh {node_name} nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits",
+            shell=True, capture_output=True, text=True, timeout=10
+        )
+        usages = [int(x) for x in result.stdout.strip().split('\n') if x]
+        avg_usage = sum(usages)/len(usages) if usages else 0
+        return avg_usage > 20  # GPU使用率超过20%视为繁忙
+    except:
+        return True  # 无法获取时视为繁忙
+
+def submit_server_job(node_name):
     """
-    提交server.slurm任务
-    返回: (是否成功, 任务ID或错误信息)
+    提交到指定节点
     """
     try:
-        # 检查slurm文件是否存在
-        if not os.path.exists("server.slurm"):
-            return (False, "server.slurm文件不存在")
-        
-        # 提交任务
-        result = subprocess.run(
-            "sbatch server.slurm",
-            shell=True,
-            capture_output=True,
-            text=True
-        )
-        
+        # 生成动态slurm脚本
+        slurm_script = f"""#!/bin/bash
+#SBATCH -J QwQ-serv
+#SBATCH -p dlq
+#SBATCH --time=7-00:00:00
+#SBATCH -N 1
+#SBATCH -n 12
+#SBATCH --mem=50G
+#SBATCH --nodelist={node_name}  # 动态设置节点名称
+#SBATCH --gres=gpu:2
+#SBATCH -o logs/{node_name}_%j.out  # 日志包含节点名称
+#SBATCH -e logs/{node_name}_%j.err
+
+# 创建日志目录（如果不存在）
+mkdir -p logs
+
+source /archive/liugu/.env
+source /archive/liugu/ds/venv/llama/bin/activate
+/archive/liugu/ds/llama.cpp-server-3090/build/bin/llama-server \\
+  -m /archive/liugu/QwQ/QwQ-GGUF/QwQ-32B-Q8_0.gguf \\
+  -ngl 100 \\
+  -fa \\
+  -ctk q8_0 \\
+  -ctv q8_0 \\
+  --host 0.0.0.0 \\
+  --port 29500 \\
+  -np 4 \\
+  -t 12 \\
+  -c 40960
+"""
+        with open("dynamic_server.slurm", "w") as f:
+            f.write(slurm_script)
+            
+        result = subprocess.run(f"sbatch dynamic_server.slurm", shell=True, capture_output=True, text=True)
         if result.returncode == 0:
-            # 从输出中提取任务ID
+            global CURRENT_RUNNING_NODE
+            CURRENT_RUNNING_NODE = node_name
             job_id = result.stdout.strip().split()[-1]
             print(f"任务提交成功，ID: {job_id}")
             return (True, job_id)
@@ -193,40 +229,66 @@ def check_and_handle_pending_jobs():
         else:
             print("尝试取消模型任务失败")
 
+def find_idle_node():
+    """寻找空闲节点"""
+    for node in ACTIVE_NODES:
+        busy, _ = check_node_status(node)
+        if not busy:
+            # 二次确认
+            time.sleep(5)
+            if not check_node_status(node)[0]:
+                return node
+    return None
+
 def main():
     print("自动提交服务器任务脚本启动")
     last_pending_check_time = 0
+    current_job_id = None
     
     while True:
         current_time = time.time()
         
-        # 每5分钟检查一次等待任务
-        if current_time - last_pending_check_time >= 300:  # 5分钟 = 300秒
-            print("执行定期检查等待任务...")
-            check_and_handle_pending_jobs()
-            last_pending_check_time = current_time
-        
-        has_jobs, result = check_node_status("compute04")
-        
-        if isinstance(result, str):  # 错误信息
-            print(f"检查节点状态失败: {result}")
-        elif has_jobs:
-            print("compute04节点当前有任务运行:")
-            for job_id, job_name in result:
-                print(f"  - 任务ID: {job_id}, 名称: {job_name}")
-            time.sleep(60)  # 1分钟后再次检查
-        else:
-            print("compute04节点空闲，准备提交任务...")
-            success, submit_result = submit_server_job()
-            
-            if success:
-                print(f"成功提交任务到compute04，任务ID: {submit_result}")
-                # 等待较长时间再次检查
-                time.sleep(300)  # 5分钟
+        # 如果当前有运行中的任务
+        if CURRENT_RUNNING_NODE:
+            # 检查任务是否仍在运行
+            busy, _ = check_node_status(CURRENT_RUNNING_NODE, ignore_our_job=False)
+            if busy:
+                print(f"{CURRENT_RUNNING_NODE} 上的任务仍在运行")
+                time.sleep(60)
+                continue
             else:
-                print(f"提交任务失败: {submit_result}")
-                # 失败后等待较短时间再试
-                time.sleep(60)  # 1分钟
+                print(f"{CURRENT_RUNNING_NODE} 上的任务已结束")
+                CURRENT_RUNNING_NODE = None
+                
+        # 寻找空闲节点
+        target_node = find_idle_node()
+        if target_node:
+            print(f"在 {target_node} 发现空闲资源，准备提交任务...")
+            success, job_id = submit_server_job(target_node)
+            if success:
+                current_job_id = job_id
+                print(f"已在 {target_node} 提交任务，ID: {job_id}")
+                # 监控间隔缩短
+                time.sleep(30)
+            else:
+                print(f"提交到 {target_node} 失败: {job_id}")
+                time.sleep(10)
+        else:
+            print("当前无可用节点，等待下一轮检查...")
+            time.sleep(60)
+        
+        # 每10分钟检查优先级
+        if current_time - last_pending_check_time >= 300:
+            # 如果有更高优先级节点空闲，迁移任务
+            for node in ACTIVE_NODES:
+                if node == CURRENT_RUNNING_NODE:
+                    continue
+                if not check_node_status(node)[0]:
+                    print(f"发现更高优先级节点 {node} 空闲，准备迁移任务")
+                    if cancel_current_job():
+                        CURRENT_RUNNING_NODE = None
+                    break
+            last_pending_check_time = current_time
 
 if __name__ == "__main__":
     try:
